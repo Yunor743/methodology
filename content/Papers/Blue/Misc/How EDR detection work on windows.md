@@ -1,0 +1,112 @@
+- Hash of the file (ex: sha256sum)
+- Entropy detection
+- Packing detection
+- Import Address Table hash / signature
+- Import Address Table Hooking:
+    - https://www.ired.team/offensive-security/code-injection-process-injection/import-adress-table-iat-hooking
+- Signature detection (using *yara rule*)
+- Static analysis / Code analysis / Capabilities identification (ex: *capa rules*)
+- Dynamic analysis / Behavioral analysis / Sandboxing
+    - Network communication (using *suricata* and *snort* rules)
+    - Userland WinAPI Hooked (detection using *sigma rules*)
+    - Sandboxes: [cuckoo](https://github.com/cuckoosandbox/cuckoo) [drakvuf](https://github.com/CERT-Polska/drakvuf-sandbox)
+        - detection example : https://github.com/a0rtega/pafish
+- In-Memory Scanning / Memory scanning (can be trigger via `Kernel callbacks`, `Hooked DLL`, etc ... See techniques below)
+    - Windows Defender scans memory when functions such as `CreateProcess` and `CreateRemoteThread` are called. F-Secure have documented this behavior in their blog post [here](https://labs.f-secure.com/blog/bypassing-windows-defender-runtime-scanning/).
+        - https://ceciliachow1998.medium.com/windows-defender-memory-scan-feature-analysis-3f9242f00132
+        - https://www.bordergate.co.uk/windows-defender-memory-scanning-evasion/
+    - Bypass:
+        - [Suspended-Thread-Injection](https://github.com/plackyhacker/Suspended-Thread-Injection) base on [article from w/secure](https://labs.withsecure.com/publications/bypassing-windows-defender-runtime-scanning)
+        - In-Memory scans tends to be lighter and signature based only, you can test your <u>memory injected</u> payload by <u>dropping it on a disk</u> and use [ThreatCheck](https://github.com/rasta-mouse/ThreatCheck) , drop the payload (memory artifact only) in a [[Malware testing platforms]], test it against [Public & Crowdsourced yara rules](https://github.com/Yara-Rules/rules) 
+    - It can also look for :
+        - Process properties : parent, name, signer, arguments, working dir, etc...
+        - Thread properties : thread ID, start address, priority
+        - Memory properties : base address, initial permissions, actual permissions, size, yype of memory, state of memory, etc ...
+        - source : https://www.cobaltstrike.com/blog/in-memory-evasion
+- Kernel callbacks (using *sigma rules*):
+    - Can be patch with a vulnerable driver
+    - Notify routine: (source :  https://jsecurity101.medium.com/understanding-telemetry-kernel-callbacks-1a97cfcb8fb3)
+        - Once notified of a new process creation an EDR can inject it's own DLL into the process, once the DLL is loaded it'll place *hooks* in userland WinAPI calls
+        - Available callbacks provided by the windows kernel:
+            - **PsSetCreateProcessNotifyRoutine/PsSetCreateProcessNotifyRoutineEx/PsSetCreateProcessNotifyRoutineEx2**: Registers a callback that collects process creation/deletion events
+            - **PsSetCreateThreadNotifyRoutine/PsSetCreateThreadNotifyRoutineEx**: Registers a callback that collects thread creation/deletion events
+            - **PsSetLoadImageNotifyRoutine/PsSetLoadImageNotifyRoutineEx**: Registers a callback that collects when an image is loaded/mapped into memory
+            - **ObRegisterCallbacks**: Registers a pre/post-operation callback that information when a process, thread, or desktop handle is opened or duplicated.
+            - **CmRegisterCallback/CmRegisterCallbackEx**: Registers a callback that receives pre/post operation information about registry actions.
+- Userland DLL Hooking (then detection is using *sigma rules*)
+    - Some bypass:
+        - You can **unhook** (patch) the dll since `kernel32.dll` is userland
+            - The EDR can perform an integrity check on the dll when it places its hooks, so patching the hook can be detected
+            - Since it use some hooked function to unhook (`VirtualProtect`, `MapViewOfFile` , `CreateFileMapping` ); It can be detected and prevented by the EDR
+            - https://www.ired.team/offensive-security/defense-evasion/how-to-unhook-a-dll-using-c++
+            - https://youtu.be/Le5GHLthnlc?t=1582
+        - Direct Syscalls
+            - `Hell's Gate` -> `Halo's Gate` -> `Tartarus' Gate` (dynamically retrieve syscall number and do direct syscall)
+            - [SysWhispers2](https://github.com/jthuraisamy/SysWhispers2) (its signature is detected)
+                - Usage example :
+                    - https://captmeelo.com/redteam/maldev/2022/02/16/libraries-for-maldev.html#syswhisper2
+                    - https://captmeelo.com/redteam/maldev/2021/11/18/av-evasion-syswhisper.html
+            - Direct syscall can be detected : Looking for the `syscall` instructions within the binary: [see this blogpost](https://captmeelo.com/redteam/maldev/2021/11/18/av-evasion-syswhisper.html)
+                - solution is to use Indirect syscalls
+        - Indirect syscalls
+        - Hardware breakpoints : https://github.com/rad9800/hwbp4mw
+- **ETW TI** : Event Tracing for Windows Threat Intelligence (then detection is using *sigma rules*)
+    - [You can patch ETW since it's userland](https://unprotect.it/technique/disabling-event-tracing-for-windows-etw/)
+ Others :
+    - IOC Scanner
+    - Integrity check
+    - Minifilters drivers, Filsystem IO monitoring:
+        - You can unregister the minifilter driver put in place by the EDR, by using another vulnerable driver
+        - https://youtu.be/TsRzxeHJJt4?t=845
+    - Artificial Intelligence
+        - Currently it just doesn't work, but in the future here are the areas in which it could be involved:
+            - Static analysis (If the file is packed, detection is useless)
+            - Dynamic analysis of telemetry
+    - Check if the binary is signed + check TSA
+        - [bypass](https://captmeelo.com//redteam/maldev/2022/11/07/cloning-signing.html) and [free TSA servers](https://gist.github.com/Manouchehri/fd754e402d98430243455713efada710)
+    - Check if it's already known in a TIP or virustotal
+    - Check if communication with a flagged IP address or domain
+    - Unusual behavior / detection rule fine tuned by human : First time this binary is executed on the system
+    - Ransomware protection : canary file
+    - Mark Of The Web (MoTW)
+    - File reputation : Used for example by <u>Microsoft SmartScreen</u> or <u>HarfangLab</u>
+    - WMI Callbacks
+    - ELAM drivers (Early Launch Anti-Malware):
+        - The ELAM feature provides a Microsoft-supported mechanism for antimalware (AM) software to start before other third-party components.
+        - https://github.com/7eRoM/elam
+    - PPL : Protected Process Light:
+        - In kernel memory resides a list called <u>ActiveProcessLinks</u> that stores all *EPROCESS* structures, each *EPROCESS* contains a `PS_PROTECTION Protection` attribute, once activated, the target process has the following protections :
+            - No process can access it's memory
+            - Cannot be killed
+            - Attach a debugger
+            - Impersonate its threads ... and more
+        - https://youtu.be/TsRzxeHJJt4?t=991
+        - It can still be bypassed via vulnerable drivers:
+            - https://github.com/RedCursorSecurityConsulting/PPLKiller
+
+##### It’s also worth mentioning how scans can be triggered:
+
+- **File Read/Write** – Whenever a new file is created or modified this can potentially trigger the AV and cause it to initiate a scan of the file.
+- **Periodic** – AV will periodically scan systems, daily or weekly scans are common and this can involve all or just a subset of the files on the system. This concept also applies to scanning the memory of running processes.
+- **Suspicious Behaviour** – AV will often monitor for suspicious behaviour (usually API calls) and use this to trigger a scan, again this could be of local files or process memory.
+
+ ---
+
+Sources:
+- https://www.youtube.com/watch?v=qXi2HuEtyAs
+- https://book.hacktricks.xyz/windows-hardening/av-bypass
+- https://subscription.packtpub.com/book/security/9781788392501/1/ch01lvl1sec13/4-types-of-malware-analysis
+- https://www.ired.team/offensive-security/defense-evasion
+- https://evasions.checkpoint.com/
+- https://www.thehacker.recipes/evasion/av
+- https://www.youtube.com/watch?v=TsRzxeHJJt4
+- https://www.youtube.com/watch?v=yacpjV6kWpM
+- https://www.youtube.com/watch?v=Le5GHLthnlc
+- https://processus.site/contournement-antivirus-edr.html
+- https://alice.climent-pommeret.red/
+- https://github.com/TheD1rkMtr
+- https://s3cur3th1ssh1t.github.io/A-tale-of-EDR-bypass-methods/
+- https://labs.withsecure.com/publications/bypassing-windows-defender-runtime-scanning
+- https://www.cobaltstrike.com/blog/in-memory-evasion
+
+![[Bypass-AV.svg]]
